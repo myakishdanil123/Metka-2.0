@@ -17,7 +17,13 @@ from typing import Any, Optional
 from urllib.parse import quote, unquote
 
 import aiohttp
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Update,
+)
+
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -27,37 +33,51 @@ from telegram.ext import (
     filters,
 )
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8055606612:AAGuCO3QbJseCRnXU3O4rhlN4EP-Drk5De4").strip()
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "AIzaSyDrf2qAL0FQJJ2_TrKWkz5IVedU-yok-uc").strip()
-MAPBOX_TOKEN = os.getenv("MAPBOX_TOKEN", "pk.eyJ1IjoibXlha2lzaDEiLCJhIjoiY210bnFscjVtMGd0NzJ3cjM5Y3Z6anJrciJ9.nHWBCkwZk2fLsHp1cFsjpg").strip()
+
+# ============================================================
+# CONFIG
+# ============================================================
+
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+MAPBOX_TOKEN = os.getenv("MAPBOX_TOKEN", "").strip()
 
 CITY_UA = "Кривий Ріг"
 CITY_RU = "Кривой Рог"
 COUNTRY_UA = "Україна"
 
-# Центрально-Городской район
+
+# ============================================================
+# ЦЕНТРАЛЬНО-ГОРОДСКОЙ РАЙОН
+# ============================================================
+
 DISTRICT_LAT_MIN = 47.78
 DISTRICT_LAT_MAX = 48.02
+
 DISTRICT_LON_MIN = 33.20
 DISTRICT_LON_MAX = 33.39
 
+
+# Общая проверка Кривого Рога
 CITY_LAT_MIN = 47.60
 CITY_LAT_MAX = 48.25
+
 CITY_LON_MIN = 32.70
 CITY_LON_MAX = 33.90
 
-# Скорость
-FAST_DEADLINE = 2.8
+
+# ============================================================
+# SPEED
+# ============================================================
+
 PROVIDER_TIMEOUT = 3.2
 OVERPASS_TIMEOUT = 2.7
-NOMINATIM_TIMEOUT = 2.4
+NOMINATIM_TIMEOUT = 2.2
 
-# Проверка источников
 CLUSTER_M = 65.0
-OSM_CONFLICT_M = 120.0
 
 CACHE_TTL = 7 * 24 * 3600
 PENDING_TTL = 2 * 3600
+
 
 HTTP_TIMEOUT = aiohttp.ClientTimeout(
     total=PROVIDER_TIMEOUT,
@@ -65,20 +85,31 @@ HTTP_TIMEOUT = aiohttp.ClientTimeout(
     sock_read=2.8,
 )
 
+
 OVERPASS_URLS = (
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
 )
 
+
 if Path("/app/data").exists():
-    DEFAULT_DB = "/app/data/metka_fast.sqlite3"
+
+    DEFAULT_DB = (
+        "/app/data/metka_fast.sqlite3"
+    )
+
 else:
-    DEFAULT_DB = "metka_fast.sqlite3"
+
+    DEFAULT_DB = (
+        "metka_fast.sqlite3"
+    )
+
 
 DB_PATH = os.getenv(
     "DB_PATH",
     DEFAULT_DB,
 ).strip()
+
 
 logging.basicConfig(
     level=getattr(
@@ -97,6 +128,7 @@ logging.basicConfig(
     ),
 )
 
+
 log = logging.getLogger(
     "metka-fast"
 )
@@ -108,6 +140,7 @@ log = logging.getLogger(
 
 @dataclass(slots=True)
 class ParsedAddress:
+
     original: str
     street: str
     house: str
@@ -115,6 +148,7 @@ class ParsedAddress:
 
 @dataclass(slots=True)
 class Candidate:
+
     source: str
 
     lat: float
@@ -129,12 +163,15 @@ class Candidate:
     confidence: float
 
     query_street: str = ""
+
     score: float = 0.0
 
 
 @dataclass(slots=True)
 class PendingResult:
+
     owner_id: int
+
     chat_id: int
 
     parsed: ParsedAddress
@@ -151,8 +188,10 @@ class PendingResult:
 # ============================================================
 
 STREET_PREFIXES = {
+
     "ул",
     "улица",
+
     "вул",
     "вулиця",
 
@@ -163,6 +202,7 @@ STREET_PREFIXES = {
 
     "пер",
     "переулок",
+
     "пров",
     "провулок",
 
@@ -183,41 +223,58 @@ STREET_PREFIXES = {
 
 SEED_ALIASES = {
 
-    # Лермонтова = Центральный проспект
     "лермонтова": [
+
         "центральний",
+
         "центральный",
 
         "проспект центральний",
+
         "проспект центральный",
 
         "центральний (лермонтова)",
+
         "центральный (лермонтова)",
     ],
 
     "центральний": [
+
         "лермонтова",
+
         "центральный",
+
         "проспект центральний",
+
         "центральний (лермонтова)",
     ],
 
     "центральный": [
+
         "лермонтова",
+
         "центральний",
+
         "проспект центральный",
+
         "центральный (лермонтова)",
     ],
 
     "одоевского": [
+
         "одоєвського",
+
         "одоевського",
+
         "одоєвского",
     ],
 
     "одоєвського": [
+
         "одоевского",
+
         "одоевського",
+
         "одоєвского",
     ],
 }
@@ -251,10 +308,14 @@ LOOKALIKES = str.maketrans({
 })
 
 
-# 25/11 -> дом 25
-# 25.11 -> дом 25
-# 25-11 -> дом 25
-# 25А/11 -> дом 25А
+# ============================================================
+# PARSER
+# ============================================================
+
+# Лермонтова 25/11 -> дом 25
+# Лермонтова 25.11 -> дом 25
+# Лермонтова 25-11 -> дом 25
+# Лермонтова 25А/11 -> дом 25А
 
 ADDRESS_RE = re.compile(
 
@@ -262,23 +323,27 @@ ADDRESS_RE = re.compile(
 
     r"(?:(?:"
 
-    r"ул(?:ица)?|"
-    r"вул(?:иця)?|"
+        r"ул(?:ица)?|"
 
-    r"просп(?:ект)?|"
-    r"пр-т|"
+        r"вул(?:иця)?|"
 
-    r"пер(?:еулок)?|"
-    r"пров(?:улок)?|"
+        r"просп(?:ект)?|"
 
-    r"бул(?:ьвар)?|"
+        r"пр-т|"
 
-    r"пл(?:ощадь|оща)?|"
+        r"пер(?:еулок)?|"
 
-    r"шоссе|"
-    r"шосе|"
+        r"пров(?:улок)?|"
 
-    r"наб(?:ережная)?"
+        r"бул(?:ьвар)?|"
+
+        r"пл(?:ощадь|оща)?|"
+
+        r"шоссе|"
+
+        r"шосе|"
+
+        r"наб(?:ережная)?"
 
     r")\.?\s+)?"
 
@@ -288,36 +353,36 @@ ADDRESS_RE = re.compile(
 
     r"(?P<house>"
 
-    r"\d{1,4}"
+        r"\d{1,4}"
 
-    r"\s*"
+        r"\s*"
 
-    r"[A-Za-zА-Яа-яЁёІіЇїЄєҐґ]{0,2}"
+        r"[A-Za-zА-Яа-яЁёІіЇїЄєҐґ]{0,2}"
 
     r")"
 
     r"(?:"
 
-    r"\s*[/.-]\s*"
+        r"\s*[/.-]\s*"
 
-    r"\d{1,6}"
+        r"\d{1,6}"
 
-    r"[A-Za-zА-Яа-яЁёІіЇїЄєҐґ]{0,2}"
+        r"[A-Za-zА-Яа-яЁёІіЇїЄєҐґ]{0,2}"
 
     r")?"
 
     r"(?:"
 
-    r"\s*,?\s*"
+        r"\s*,?\s*"
 
-    r"(?:"
-    r"кв(?:артира)?\.?|"
-    r"apt\.?"
-    r")"
+        r"(?:"
+            r"кв(?:артира)?\.?|"
+            r"apt\.?"
+        r")"
 
-    r"\s*№?\s*"
+        r"\s*№?\s*"
 
-    r"\d{1,6}"
+        r"\d{1,6}"
 
     r")?"
 
@@ -351,9 +416,13 @@ def normalize_text(
     )
 
     value = re.sub(
+
         r"[^0-9a-zа-яіїєґ'()\-\s]+",
+
         " ",
+
         value,
+
         flags=re.I,
     )
 
@@ -412,20 +481,27 @@ def street_core(
     )
 
     words = [
+
         word.strip(
             ".-"
         )
+
         for word
         in value.split()
     ]
 
     return " ".join(
+
         word
+
         for word
         in words
+
         if (
             word
+
             and
+
             word not in STREET_PREFIXES
         )
     )
@@ -437,14 +513,21 @@ def same_house(
 ) -> bool:
 
     return bool(
+
         a
+
         and
+
         b
+
         and
+
         normalize_house(
             a
         )
+
         ==
+
         normalize_house(
             b
         )
@@ -456,6 +539,7 @@ def parse_address(
 ) -> Optional[ParsedAddress]:
 
     if not text:
+
         return None
 
     original = unicodedata.normalize(
@@ -464,43 +548,77 @@ def parse_address(
     ).strip()
 
     if (
+
         len(
             original
-        ) > 140
+        )
+        >
+        140
+
         or
-        "http://" in original.lower()
+
+        "http://"
+        in
+        original.lower()
+
         or
-        "https://" in original.lower()
+
+        "https://"
+        in
+        original.lower()
+
     ):
+
         return None
 
+
     cleaned = re.sub(
+
         r"(?iu),?\s*"
+
         r"(?:м\.?\s*)?"
+
         r"(?:"
-        r"кривой\s+рог|"
-        r"кривий\s+ріг"
+
+            r"кривой\s+рог|"
+
+            r"кривий\s+ріг"
+
         r")"
+
         r"(?:"
-        r",?\s*"
-        r"(?:"
-        r"украина|"
-        r"україна"
-        r")"
+
+            r",?\s*"
+
+            r"(?:"
+
+                r"украина|"
+
+                r"україна"
+
+            r")"
+
         r")?"
+
         r"\s*$",
+
         "",
+
         original,
+
     ).strip(
         " ,"
     )
+
 
     match = ADDRESS_RE.match(
         cleaned
     )
 
     if not match:
+
         return None
+
 
     street = match.group(
         "street"
@@ -508,22 +626,30 @@ def parse_address(
         " ,.-"
     )
 
+
     house = normalize_house(
+
         match.group(
             "house"
         )
     )
+
 
     if len(
         street_core(
             street
         )
     ) < 2:
+
         return None
 
+
     return ParsedAddress(
+
         original=original,
+
         street=street,
+
         house=house,
     )
 
@@ -540,31 +666,40 @@ def street_variants(
         street
     ]
 
+
     for canonical, aliases in SEED_ALIASES.items():
 
         family = {
+
             street_core(
                 canonical
             ),
+
             *(
                 street_core(
                     x
                 )
+
                 for x
                 in aliases
             ),
         }
 
+
         if base in family:
 
-            values.extend([
-                canonical,
-                *aliases,
-            ])
+            values.extend(
+                [
+                    canonical,
+                    *aliases,
+                ]
+            )
+
 
     result = []
 
     seen = set()
+
 
     for value in values:
 
@@ -574,7 +709,9 @@ def street_variants(
 
         if (
             key
+
             and
+
             key not in seen
         ):
 
@@ -585,6 +722,7 @@ def street_variants(
             result.append(
                 value
             )
+
 
     return result[:8]
 
@@ -602,50 +740,70 @@ def street_similarity(
         b
     )
 
-    if (
-        not aa
-        or
-        not bb
-    ):
+
+    if not aa or not bb:
+
         return 0.0
 
+
     if (
+
         aa == bb
+
         or
+
         aa in bb
+
         or
+
         bb in aa
+
     ):
+
         return 1.0
 
+
     fa = {
+
         street_core(
             x
         )
+
         for x
         in street_variants(
             a
         )
     }
 
+
     fb = {
+
         street_core(
             x
         )
+
         for x
         in street_variants(
             b
         )
     }
 
+
     if fa & fb:
+
         return 1.0
 
+
     sequence = difflib.SequenceMatcher(
+
         None,
+
         aa,
+
         bb,
+
     ).ratio()
+
 
     wa = set(
         aa.split()
@@ -655,11 +813,15 @@ def street_similarity(
         bb.split()
     )
 
+
     jaccard = (
+
         len(
             wa & wb
         )
+
         /
+
         max(
             1,
             len(
@@ -667,6 +829,7 @@ def street_similarity(
             ),
         )
     )
+
 
     return max(
         sequence,
@@ -739,8 +902,11 @@ def address_key(
 ) -> str:
 
     return (
+
         f"{street_core(parsed.street)}"
-        f"|"
+
+        "|"
+
         f"{normalize_house(parsed.house)}"
     )
 
@@ -752,22 +918,29 @@ def get_learned(
     with db() as connection:
 
         row = connection.execute(
+
             """
             SELECT *
             FROM confirmed_addresses
             WHERE query_key=?
             """,
+
             (
                 address_key(
                     parsed
                 ),
             ),
+
         ).fetchone()
 
+
     if not row:
+
         return None
 
+
     return Candidate(
+
         source="learned",
 
         lat=float(
@@ -787,8 +960,11 @@ def get_learned(
         ),
 
         label=str(
+
             row["label"]
+
             or
+
             row["original_query"]
         ),
 
@@ -801,19 +977,23 @@ def get_learned(
 
 
 def save_learned(
+
     parsed: ParsedAddress,
 
     lat: float,
+
     lon: float,
 
     label: str,
 
     source: str,
+
 ) -> None:
 
     with db() as connection:
 
         connection.execute(
+
             """
             INSERT INTO confirmed_addresses(
 
@@ -905,7 +1085,7 @@ def save_learned(
 
 
 # ============================================================
-# ЦЕНТРАЛЬНО-ГОРОДСКОЙ РАЙОН
+# DISTRICT
 # ============================================================
 
 DISTRICT_GEOJSON: Optional[
@@ -914,9 +1094,13 @@ DISTRICT_GEOJSON: Optional[
 
 
 def point_in_ring(
+
     lon: float,
+
     lat: float,
+
     ring: list,
+
 ) -> bool:
 
     inside = False
@@ -924,6 +1108,7 @@ def point_in_ring(
     j = len(
         ring
     ) - 1
+
 
     for i in range(
         len(
@@ -947,6 +1132,7 @@ def point_in_ring(
             ring[j][1]
         )
 
+
         if (
             (yi > lat)
             !=
@@ -954,42 +1140,66 @@ def point_in_ring(
         ):
 
             cross = (
+
                 (
-                    xj - xi
+                    xj
+                    -
+                    xi
                 )
+
                 *
+
                 (
-                    lat - yi
+                    lat
+                    -
+                    yi
                 )
+
                 /
+
                 (
                     (
-                        yj - yi
+                        yj
+                        -
+                        yi
                     )
+
                     or
+
                     1e-15
                 )
+
                 +
+
                 xi
             )
 
+
             if lon < cross:
+
                 inside = not inside
 
+
         j = i
+
 
     return inside
 
 
 def point_in_geojson(
+
     lat: float,
+
     lon: float,
+
     geojson: dict[str, Any],
+
 ) -> bool:
 
     geometry_type = geojson.get(
         "type"
     )
+
 
     coordinates = (
         geojson.get(
@@ -998,6 +1208,7 @@ def point_in_geojson(
         or
         []
     )
+
 
     if geometry_type == "Polygon":
 
@@ -1013,40 +1224,63 @@ def point_in_geojson(
 
         return False
 
+
     for polygon in polygons:
 
         if not polygon:
+
             continue
+
 
         if not point_in_ring(
+
             lon,
+
             lat,
+
             polygon[0],
+
         ):
+
             continue
+
 
         if any(
+
             point_in_ring(
+
                 lon,
+
                 lat,
+
                 hole,
+
             )
+
             for hole
             in polygon[1:]
+
         ):
+
             continue
 
+
         return True
+
 
     return False
 
 
 def in_target_district(
+
     lat: float,
+
     lon: float,
+
 ) -> bool:
 
     if not (
+
         CITY_LAT_MIN
         <=
         lat
@@ -1060,19 +1294,26 @@ def in_target_district(
         lon
         <=
         CITY_LON_MAX
+
     ):
 
         return False
 
+
     if DISTRICT_GEOJSON:
 
         return point_in_geojson(
+
             lat,
+
             lon,
+
             DISTRICT_GEOJSON,
         )
 
+
     return (
+
         DISTRICT_LAT_MIN
         <=
         lat
@@ -1094,6 +1335,7 @@ def in_target_district(
 # ============================================================
 
 async def get_json(
+
     session: aiohttp.ClientSession,
 
     url: str,
@@ -1103,26 +1345,153 @@ async def get_json(
     params=None,
 
     headers=None,
+
 ) -> Any:
 
     async with session.get(
+
         url,
+
         params=params,
+
         headers=headers,
+
     ) as response:
 
         body = await response.text()
 
+
         if response.status != 200:
 
             raise RuntimeError(
-                f"HTTP {response.status}: "
+
+                f"HTTP "
+                f"{response.status}: "
                 f"{body[:220]}"
             )
+
 
         return await response.json(
             content_type=None
         )
+
+
+async def post_form_json(
+
+    session: aiohttp.ClientSession,
+
+    url: str,
+
+    *,
+
+    data: dict[str, str],
+
+    headers=None,
+
+    timeout: float | None = None,
+
+) -> Any:
+
+    async with session.post(
+
+        url,
+
+        data=data,
+
+        headers=headers,
+
+        timeout=(
+
+            aiohttp.ClientTimeout(
+                total=timeout
+            )
+
+            if timeout
+
+            else
+
+            None
+        ),
+
+    ) as response:
+
+        body = await response.text()
+
+
+        if response.status != 200:
+
+            raise RuntimeError(
+
+                f"HTTP "
+                f"{response.status}: "
+                f"{body[:220]}"
+            )
+
+
+        return await response.json(
+            content_type=None
+        )
+
+
+async def safe_call(
+
+    name: str,
+
+    coroutine: Any,
+
+    timeout: float,
+
+) -> list[Candidate]:
+
+    started = time.perf_counter()
+
+
+    try:
+
+        result = await asyncio.wait_for(
+
+            coroutine,
+
+            timeout=timeout,
+        )
+
+
+        log.info(
+
+            "%s: %d result(s) %.2fs",
+
+            name,
+
+            len(
+                result
+            ),
+
+            time.perf_counter()
+            -
+            started,
+        )
+
+
+        return result
+
+
+    except Exception as exc:
+
+        log.warning(
+
+            "%s failed %.2fs: %s",
+
+            name,
+
+            time.perf_counter()
+            -
+            started,
+
+            exc,
+        )
+
+
+        return []
 
 
 async def load_district_polygon(
@@ -1131,9 +1500,11 @@ async def load_district_polygon(
 
     global DISTRICT_GEOJSON
 
+
     try:
 
         data = await get_json(
+
             session,
 
             (
@@ -1143,6 +1514,7 @@ async def load_district_polygon(
             ),
 
             params={
+
                 "q":
                     (
                         "Центрально-Міський район, "
@@ -1166,10 +1538,12 @@ async def load_district_polygon(
             },
 
             headers={
+
                 "User-Agent":
                     "Metka-Kryvyi-Rih-Fast/1.0"
             },
         )
+
 
         for item in (
             data
@@ -1181,7 +1555,9 @@ async def load_district_polygon(
                 "geojson"
             )
 
+
             if (
+
                 isinstance(
                     geo,
                     dict,
@@ -1192,24 +1568,33 @@ async def load_district_polygon(
                 geo.get(
                     "type"
                 )
+
                 in {
+
                     "Polygon",
+
                     "MultiPolygon",
                 }
+
             ):
 
                 DISTRICT_GEOJSON = geo
+
 
                 log.info(
                     "District polygon loaded"
                 )
 
+
                 return
+
 
     except Exception as exc:
 
         log.warning(
+
             "District polygon fallback to bbox: %s",
+
             exc,
         )
 
@@ -1219,14 +1604,19 @@ async def load_district_polygon(
 # ============================================================
 
 def haversine_m(
+
     lat1: float,
+
     lon1: float,
 
     lat2: float,
+
     lon2: float,
+
 ) -> float:
 
     radius = 6371000.0
+
 
     p1 = math.radians(
         lat1
@@ -1236,6 +1626,7 @@ def haversine_m(
         lat2
     )
 
+
     dp = math.radians(
         lat2 - lat1
     )
@@ -1244,7 +1635,9 @@ def haversine_m(
         lon2 - lon1
     )
 
-    a = (
+
+    value = (
+
         math.sin(
             dp / 2
         ) ** 2
@@ -1268,28 +1661,41 @@ def haversine_m(
         ) ** 2
     )
 
+
     return (
+
         2
+
         *
+
         radius
+
         *
+
         math.asin(
             math.sqrt(
-                a
+                value
             )
         )
     )
 
 
 def distance(
+
     a: Candidate,
+
     b: Candidate,
+
 ) -> float:
 
     return haversine_m(
+
         a.lat,
+
         a.lon,
+
         b.lat,
+
         b.lon,
     )
 
@@ -1299,78 +1705,113 @@ def family(
 ) -> str:
 
     if source in {
+
         "overpass",
+
         "osm",
+
     }:
 
         return "osm"
+
 
     return source
 
 
 # ============================================================
-# ПРОВЕРКА КАНДИДАТА
+# VALIDATION
 # ============================================================
 
 def valid_candidate(
+
     parsed: ParsedAddress,
+
     candidate: Candidate,
+
 ) -> bool:
 
     if candidate.source == "learned":
+
         return True
 
+
     if not in_target_district(
+
         candidate.lat,
+
         candidate.lon,
+
     ):
 
         return False
 
-    # Номер дома обязан совпасть
+
+    # Только точный номер дома
     if not same_house(
+
         parsed.house,
+
         candidate.house,
+
     ):
 
         return False
 
-    # Центр улицы не принимаем
+
+    # Не отдаём центр улицы
     if candidate.precision in {
+
         "street",
+
         "city",
+
         "center",
+
         "unknown",
+
     }:
 
         return False
 
+
     similarity = max(
+
         street_similarity(
+
             parsed.street,
+
             candidate.street
             or
             candidate.label,
+
         ),
 
         (
+
             street_similarity(
+
                 candidate.query_street,
+
                 candidate.street
                 or
                 candidate.label,
+
             )
+
             if candidate.query_street
+
             else
+
             0.0
         ),
     )
+
 
     return similarity >= 0.48
 
 
 # ============================================================
-# ВЕСА
+# SCORE
 # ============================================================
 
 PROVIDER_BASE = {
@@ -1378,37 +1819,42 @@ PROVIDER_BASE = {
     "learned":
         10000.0,
 
-    # OSM главный
+    # OpenStreetMap главный
     "overpass":
         220.0,
 
     "osm":
         205.0,
 
-    # Google второй
-    "google":
-        175.0,
-
-    # Mapbox третий
+    # Mapbox — проверка / fallback
     "mapbox":
         145.0,
 }
 
 
 def score_candidate(
+
     parsed: ParsedAddress,
+
     candidate: Candidate,
+
 ) -> float:
 
     if candidate.source == "learned":
+
         return 10000.0
 
+
     if not valid_candidate(
+
         parsed,
+
         candidate,
+
     ):
 
         return -1000.0
+
 
     precision_bonus = {
 
@@ -1437,25 +1883,35 @@ def score_candidate(
             0.0,
 
     }.get(
+
         candidate.precision,
+
         0.0,
     )
+
 
     similarity = max(
 
         street_similarity(
+
             parsed.street,
+
             candidate.street
             or
             candidate.label,
+
         ),
 
         (
+
             street_similarity(
+
                 candidate.query_street,
+
                 candidate.street
                 or
                 candidate.label,
+
             )
 
             if candidate.query_street
@@ -1466,9 +1922,13 @@ def score_candidate(
         ),
     )
 
+
     return (
+
         PROVIDER_BASE.get(
+
             candidate.source,
+
             80.0,
         )
 
@@ -1491,28 +1951,38 @@ def score_candidate(
 
 
 def rank_candidates(
+
     parsed: ParsedAddress,
+
     candidates: list[Candidate],
+
 ) -> list[Candidate]:
 
     good = [
+
         candidate
 
         for candidate
         in candidates
 
         if valid_candidate(
+
             parsed,
+
             candidate,
         )
     ]
 
+
     for candidate in good:
 
         candidate.score = score_candidate(
+
             parsed,
+
             candidate,
         )
+
 
         supporters = {
 
@@ -1524,6 +1994,7 @@ def rank_candidates(
             in good
 
             if (
+
                 other is not candidate
 
                 and
@@ -1531,7 +2002,9 @@ def rank_candidates(
                 family(
                     other.source
                 )
+
                 !=
+
                 family(
                     candidate.source
                 )
@@ -1539,41 +2012,59 @@ def rank_candidates(
                 and
 
                 distance(
+
                     candidate,
+
                     other,
+
                 )
+
                 <=
+
                 CLUSTER_M
             )
         }
 
+
         candidate.score += (
+
             20.0
+
             *
+
             min(
+
                 2,
+
                 len(
                     supporters
                 ),
             )
         )
 
+
     good.sort(
+
         key=lambda candidate:
             candidate.score,
+
         reverse=True,
     )
 
+
     result = []
+
 
     for candidate in good:
 
-        if any(
+        duplicate = any(
 
             family(
                 candidate.source
             )
+
             ==
+
             family(
                 existing.source
             )
@@ -1581,161 +2072,150 @@ def rank_candidates(
             and
 
             distance(
+
                 candidate,
+
                 existing,
+
             )
+
             <
+
             8
 
             for existing
             in result
+        )
 
-        ):
+
+        if duplicate:
 
             continue
+
 
         result.append(
             candidate
         )
 
+
     return result[:12]
 
 
 # ============================================================
-# ВЫБОР ТОЧКИ
+# ВЫБОР
 # ============================================================
 
 def choose_result(
+
     parsed: ParsedAddress,
+
     ranked: list[Candidate],
+
 ) -> Optional[Candidate]:
 
     if not ranked:
+
         return None
 
-    # Сохранённая подтверждённая метка
+
+    # Сначала сохранённые подтверждённые точки
     learned = next(
+
         (
+
             candidate
+
             for candidate
             in ranked
+
             if candidate.source
             ==
             "learned"
+
         ),
+
         None,
     )
 
+
     if learned:
+
         return learned
 
+
     # ========================================================
-    # OSM ГЛАВНЫЙ
+    # OPENSTREETMAP — ГЛАВНЫЙ
     # ========================================================
 
     osm = next(
+
         (
+
             candidate
+
             for candidate
             in ranked
+
             if candidate.source
+
             in {
+
                 "overpass",
+
                 "osm",
             }
+
         ),
+
         None,
     )
 
+
+    mapbox = next(
+
+        (
+
+            candidate
+
+            for candidate
+            in ranked
+
+            if candidate.source
+            ==
+            "mapbox"
+
+        ),
+
+        None,
+    )
+
+
     if osm:
 
-        # Google или Mapbox рядом с OSM
-        verifier = next(
-            (
-                candidate
-
-                for candidate
-                in ranked
-
-                if (
-                    family(
-                        candidate.source
-                    )
-                    !=
-                    "osm"
-
-                    and
-
-                    distance(
-                        osm,
-                        candidate,
-                    )
-                    <=
-                    CLUSTER_M
-                )
-            ),
-            None,
-        )
-
-        if verifier:
-
-            # Оставляем координату OSM
-            return osm
-
-        google = next(
-            (
-                candidate
-                for candidate
-                in ranked
-                if candidate.source
-                ==
-                "google"
-            ),
-            None,
-        )
-
-        mapbox = next(
-            (
-                candidate
-                for candidate
-                in ranked
-                if candidate.source
-                ==
-                "mapbox"
-            ),
-            None,
-        )
-
-        # Google + Mapbox согласны,
-        # а OSM сильно далеко
+        # Mapbox подтвердил OSM
         if (
-            google
-            and
+
             mapbox
+
             and
+
             distance(
-                google,
+                osm,
                 mapbox,
             )
+
             <=
+
             CLUSTER_M
+
         ):
 
-            if min(
-                distance(
-                    osm,
-                    google,
-                ),
-                distance(
-                    osm,
-                    mapbox,
-                ),
-            ) >= OSM_CONFLICT_M:
+            return osm
 
-                return google
 
-        # Реальный OSM building
+        # Сильный OSM building
         if (
+
             osm.precision
             ==
             "building"
@@ -1745,136 +2225,75 @@ def choose_result(
             osm.confidence
             >=
             0.95
+
         ):
 
             return osm
 
-    # ========================================================
-    # GOOGLE
-    # ========================================================
 
-    google = next(
-        (
-            candidate
+        # Точный адрес OSM
+        if (
 
-            for candidate
-            in ranked
+            osm.precision
+            ==
+            "address"
 
-            if (
-                candidate.source
-                ==
-                "google"
+            and
 
-                and
+            osm.confidence
+            >=
+            0.93
 
-                candidate.precision
-                ==
-                "rooftop"
+        ):
 
-                and
+            return osm
 
-                candidate.confidence
-                >=
-                0.94
-            )
-        ),
-        None,
-    )
-
-    if google:
-        return google
 
     # ========================================================
-    # MAPBOX
+    # MAPBOX FALLBACK
     # ========================================================
-
-    mapbox = next(
-        (
-            candidate
-
-            for candidate
-            in ranked
-
-            if (
-                candidate.source
-                ==
-                "mapbox"
-
-                and
-
-                candidate.precision
-                in {
-                    "rooftop",
-                    "entrance",
-                    "point",
-                    "address",
-                }
-
-                and
-
-                candidate.confidence
-                >=
-                0.90
-            )
-        ),
-        None,
-    )
 
     if mapbox:
-        return mapbox
 
-    # Последняя проверка Google + Mapbox
-    google = next(
-        (
-            candidate
-            for candidate
-            in ranked
-            if candidate.source
-            ==
-            "google"
-        ),
-        None,
-    )
+        if (
 
-    mapbox = next(
-        (
-            candidate
-            for candidate
-            in ranked
-            if candidate.source
-            ==
-            "mapbox"
-        ),
-        None,
-    )
+            mapbox.precision
 
-    if (
-        google
-        and
-        mapbox
-        and
-        distance(
-            google,
-            mapbox,
-        )
-        <=
-        CLUSTER_M
-    ):
+            in {
 
-        return google
+                "rooftop",
+
+                "entrance",
+
+                "point",
+
+                "address",
+            }
+
+            and
+
+            mapbox.confidence
+            >=
+            0.90
+
+        ):
+
+            return mapbox
+
 
     return None
 
 
 # ============================================================
-# OSM OVERPASS
+# OPENSTREETMAP / OVERPASS
 # ============================================================
 
-def overpass_street_regex(
+def overpass_regex(
     parsed: ParsedAddress,
 ) -> str:
 
     values = []
+
 
     for street in street_variants(
         parsed.street
@@ -1884,129 +2303,131 @@ def overpass_street_regex(
             street
         )
 
+
         if core:
 
             values.append(
+
                 re.escape(
                     core
                 )
             )
 
+
     values = sorted(
+
         set(
             values
         ),
+
         key=len,
+
         reverse=True,
     )
 
+
     return (
+
         "("
+
         +
+
         "|".join(
             values[:8]
         )
+
         +
+
         ")"
     )
 
 
-def overpass_house_regex(
-    parsed: ParsedAddress,
-) -> str:
-
-    number = re.match(
-        r"\d+",
-        normalize_house(
-            parsed.house
-        ),
-    )
-
-    if not number:
-
-        return re.escape(
-            parsed.house
-        )
-
-    return (
-        re.escape(
-            number.group(
-                0
-            )
-        )
-
-        +
-
-        r"[A-Za-zА-Яа-яЁёІіЇїЄєҐґ]{0,2}"
-    )
-
-
 async def geocode_overpass(
+
     session: aiohttp.ClientSession,
+
     parsed: ParsedAddress,
+
 ) -> list[Candidate]:
 
-    house_regex = overpass_house_regex(
+    house = re.escape(
+
+        normalize_house(
+            parsed.house
+        )
+    )
+
+
+    street_re = overpass_regex(
         parsed
     )
 
-    street_regex = overpass_street_regex(
-        parsed
-    )
 
     bbox = (
+
         f"{DISTRICT_LAT_MIN},"
+
         f"{DISTRICT_LON_MIN},"
+
         f"{DISTRICT_LAT_MAX},"
+
         f"{DISTRICT_LON_MAX}"
     )
+
 
     query = f"""
 [out:json][timeout:2];
 
 (
   node
-  ["addr:housenumber"~"^{house_regex}$",i]
-  ["addr:street"~"{street_regex}",i]
+  ["addr:housenumber"~"^{house}$",i]
+  ["addr:street"~"{street_re}",i]
   ({bbox});
 
   way
-  ["addr:housenumber"~"^{house_regex}$",i]
-  ["addr:street"~"{street_regex}",i]
+  ["addr:housenumber"~"^{house}$",i]
+  ["addr:street"~"{street_re}",i]
   ({bbox});
 
   relation
-  ["addr:housenumber"~"^{house_regex}$",i]
-  ["addr:street"~"{street_regex}",i]
+  ["addr:housenumber"~"^{house}$",i]
+  ["addr:street"~"{street_re}",i]
   ({bbox});
+
 
   node
-  ["addr:housenumber"~"^{house_regex}$",i]
-  ["addr:place"~"{street_regex}",i]
+  ["addr:housenumber"~"^{house}$",i]
+  ["addr:place"~"{street_re}",i]
   ({bbox});
 
   way
-  ["addr:housenumber"~"^{house_regex}$",i]
-  ["addr:place"~"{street_regex}",i]
+  ["addr:housenumber"~"^{house}$",i]
+  ["addr:place"~"{street_re}",i]
   ({bbox});
 
   relation
-  ["addr:housenumber"~"^{house_regex}$",i]
-  ["addr:place"~"{street_regex}",i]
+  ["addr:housenumber"~"^{house}$",i]
+  ["addr:place"~"{street_re}",i]
   ({bbox});
 );
 
 out center tags 30;
 """
 
-    data = None
+
     last_error = None
+
+    data = None
+
 
     for url in OVERPASS_URLS:
 
         try:
 
-            async with session.post(
+            data = await post_form_json(
+
+                session,
+
                 url,
 
                 data={
@@ -2014,98 +2435,122 @@ out center tags 30;
                         query
                 },
 
-                timeout=aiohttp.ClientTimeout(
-                    total=OVERPASS_TIMEOUT
-                ),
-
                 headers={
+
                     "User-Agent":
                         "Metka-Kryvyi-Rih-Fast/1.0"
                 },
 
-            ) as response:
+                timeout=
+                    OVERPASS_TIMEOUT,
+            )
 
-                body = await response.text()
 
-                if response.status != 200:
+            break
 
-                    raise RuntimeError(
-                        f"Overpass "
-                        f"{response.status}: "
-                        f"{body[:200]}"
-                    )
-
-                data = await response.json(
-                    content_type=None
-                )
-
-                break
 
         except Exception as exc:
 
             last_error = exc
 
+
     if data is None:
 
         if last_error:
+
             raise last_error
+
 
         return []
 
+
     result = []
 
+
     for element in (
+
         data.get(
             "elements",
             [],
         )
+
         or
+
         []
     ):
 
         tags = (
+
             element.get(
                 "tags"
             )
+
             or
+
             {}
         )
 
-        house = str(
+
+        got_house = str(
+
             tags.get(
                 "addr:housenumber"
             )
+
             or
+
             ""
         )
 
+
         street = str(
+
             tags.get(
                 "addr:street"
             )
+
             or
+
             tags.get(
                 "addr:place"
             )
+
             or
+
             ""
         )
 
+
         if (
+
             not same_house(
-                house,
+
+                got_house,
+
                 parsed.house,
             )
+
             or
+
             not street
+
         ):
 
             continue
 
+
         if (
-            "lat" in element
+
+            "lat"
+            in
+            element
+
             and
-            "lon" in element
+
+            "lon"
+            in
+            element
+
         ):
 
             lat = float(
@@ -2116,23 +2561,37 @@ out center tags 30;
                 element["lon"]
             )
 
+
         else:
 
             center = (
+
                 element.get(
                     "center"
                 )
+
                 or
+
                 {}
             )
 
+
             if (
-                "lat" not in center
+
+                "lat"
+                not in
+                center
+
                 or
-                "lon" not in center
+
+                "lon"
+                not in
+                center
+
             ):
 
                 continue
+
 
             lat = float(
                 center["lat"]
@@ -2142,19 +2601,28 @@ out center tags 30;
                 center["lon"]
             )
 
+
         if not in_target_district(
+
             lat,
+
             lon,
+
         ):
 
             continue
 
+
         is_building = (
+
             element.get(
                 "type"
             )
+
             in {
+
                 "way",
+
                 "relation",
             }
 
@@ -2167,473 +2635,306 @@ out center tags 30;
             )
         )
 
+
         result.append(
+
             Candidate(
+
                 source="overpass",
 
                 lat=lat,
+
                 lon=lon,
 
                 street=street,
 
-                house=house,
+                house=got_house,
 
                 label=(
                     f"{street} "
-                    f"{house}"
+                    f"{got_house}"
                 ),
 
                 precision=(
+
                     "building"
+
                     if is_building
+
                     else
+
                     "address"
                 ),
 
                 confidence=(
+
                     0.99
+
                     if is_building
+
                     else
+
                     0.93
                 ),
 
-                query_street=parsed.street,
+                query_street=
+                    parsed.street,
             )
         )
+
 
     return result
 
 
 # ============================================================
-# OSM NOMINATIM — FALLBACK
+# NOMINATIM FALLBACK
 # ============================================================
 
 async def geocode_nominatim(
+
     session: aiohttp.ClientSession,
+
     parsed: ParsedAddress,
+
 ) -> list[Candidate]:
+
+    street = street_variants(
+        parsed.street
+    )[0]
+
+
+    data = await get_json(
+
+        session,
+
+        (
+            "https://nominatim."
+            "openstreetmap.org/"
+            "search"
+        ),
+
+        params={
+
+            "q":
+                (
+                    f"{parsed.house} "
+                    f"{street}, "
+                    f"{CITY_UA}, "
+                    f"{COUNTRY_UA}"
+                ),
+
+            "format":
+                "jsonv2",
+
+            "addressdetails":
+                1,
+
+            "limit":
+                5,
+
+            "countrycodes":
+                "ua",
+
+            "bounded":
+                1,
+
+            "viewbox":
+                (
+                    f"{DISTRICT_LON_MIN},"
+                    f"{DISTRICT_LAT_MAX},"
+                    f"{DISTRICT_LON_MAX},"
+                    f"{DISTRICT_LAT_MIN}"
+                ),
+        },
+
+        headers={
+
+            "User-Agent":
+                "Metka-Kryvyi-Rih-Fast/1.0",
+
+            "Accept-Language":
+                "uk,ru;q=0.9",
+        },
+    )
+
 
     result = []
 
-    for index, street in enumerate(
-        street_variants(
-            parsed.street
-        )[:2]
-    ):
 
-        data = await get_json(
-            session,
-
-            (
-                "https://nominatim."
-                "openstreetmap.org/"
-                "search"
-            ),
-
-            params={
-                "q":
-                    (
-                        f"{parsed.house} "
-                        f"{street}, "
-                        f"{CITY_UA}, "
-                        f"{COUNTRY_UA}"
-                    ),
-
-                "format":
-                    "jsonv2",
-
-                "addressdetails":
-                    1,
-
-                "limit":
-                    5,
-
-                "countrycodes":
-                    "ua",
-
-                "bounded":
-                    1,
-
-                "viewbox":
-                    (
-                        f"{DISTRICT_LON_MIN},"
-                        f"{DISTRICT_LAT_MAX},"
-                        f"{DISTRICT_LON_MAX},"
-                        f"{DISTRICT_LAT_MIN}"
-                    ),
-            },
-
-            headers={
-                "User-Agent":
-                    "Metka-Kryvyi-Rih-Fast/1.0",
-
-                "Accept-Language":
-                    "uk,ru;q=0.9",
-            },
-        )
-
-        for item in (
-            data
-            or
-            []
-        ):
-
-            address = (
-                item.get(
-                    "address"
-                )
-                or
-                {}
-            )
-
-            house = str(
-                address.get(
-                    "house_number"
-                )
-                or
-                ""
-            )
-
-            if not same_house(
-                house,
-                parsed.house,
-            ):
-
-                continue
-
-            lat = float(
-                item["lat"]
-            )
-
-            lon = float(
-                item["lon"]
-            )
-
-            if not in_target_district(
-                lat,
-                lon,
-            ):
-
-                continue
-
-            road = str(
-                address.get(
-                    "road"
-                )
-                or
-                address.get(
-                    "pedestrian"
-                )
-                or
-                address.get(
-                    "residential"
-                )
-                or
-                address.get(
-                    "place"
-                )
-                or
-                street
-            )
-
-            address_type = str(
-                item.get(
-                    "addresstype"
-                )
-                or
-                item.get(
-                    "type"
-                )
-                or
-                ""
-            ).lower()
-
-            precision = (
-                "building"
-                if address_type
-                in {
-                    "building",
-                    "house",
-                    "residential",
-                }
-                else
-                "address"
-            )
-
-            result.append(
-                Candidate(
-                    source="osm",
-
-                    lat=lat,
-                    lon=lon,
-
-                    street=road,
-
-                    house=house,
-
-                    label=str(
-                        item.get(
-                            "display_name"
-                        )
-                        or
-                        ""
-                    ),
-
-                    precision=precision,
-
-                    confidence=(
-                        0.95
-                        if precision
-                        ==
-                        "building"
-                        else
-                        0.90
-                    ),
-
-                    query_street=street,
-                )
-            )
-
-        if result:
-            break
-
-        if index == 0:
-
-            await asyncio.sleep(
-                1.05
-            )
-
-    return result
-
-
-# ============================================================
-# GOOGLE
-# ============================================================
-
-def google_component(
-    item: dict[str, Any],
-    kind: str,
-) -> str:
-
-    for component in (
-        item.get(
-            "address_components",
-            [],
-        )
+    for item in (
+        data
         or
         []
     ):
 
-        if kind in (
-            component.get(
-                "types"
+        address = (
+
+            item.get(
+                "address"
             )
+
             or
-            []
-        ):
 
-            return str(
-                component.get(
-                    "long_name"
-                )
-                or
-                ""
-            )
-
-    return ""
-
-
-async def geocode_google(
-    session: aiohttp.ClientSession,
-    parsed: ParsedAddress,
-) -> list[Candidate]:
-
-    if not GOOGLE_API_KEY:
-        return []
-
-    result = []
-
-    # Для скорости максимум 2 названия улицы
-    for street in street_variants(
-        parsed.street
-    )[:2]:
-
-        data = await get_json(
-            session,
-
-            (
-                "https://maps.googleapis.com/"
-                "maps/api/geocode/json"
-            ),
-
-            params={
-                "address":
-                    (
-                        f"{street} "
-                        f"{parsed.house}, "
-                        f"{CITY_UA}, "
-                        f"{COUNTRY_UA}"
-                    ),
-
-                "components":
-                    "country:UA",
-
-                "bounds":
-                    (
-                        f"{DISTRICT_LAT_MIN},"
-                        f"{DISTRICT_LON_MIN}"
-                        f"|"
-                        f"{DISTRICT_LAT_MAX},"
-                        f"{DISTRICT_LON_MAX}"
-                    ),
-
-                "language":
-                    "uk",
-
-                "region":
-                    "ua",
-
-                "key":
-                    GOOGLE_API_KEY,
-            },
+            {}
         )
 
-        for item in (
-            data.get(
-                "results",
-                [],
+
+        house = str(
+
+            address.get(
+                "house_number"
             )
+
             or
-            []
+
+            ""
+        )
+
+
+        if not same_house(
+
+            house,
+
+            parsed.house,
+
         ):
 
-            if item.get(
-                "partial_match"
-            ):
+            continue
 
-                continue
 
-            house = google_component(
-                item,
-                "street_number",
+        lat = float(
+            item["lat"]
+        )
+
+        lon = float(
+            item["lon"]
+        )
+
+
+        if not in_target_district(
+
+            lat,
+
+            lon,
+
+        ):
+
+            continue
+
+
+        road = str(
+
+            address.get(
+                "road"
             )
 
-            if not same_house(
-                house,
-                parsed.house,
-            ):
+            or
 
-                continue
-
-            geometry = (
-                item.get(
-                    "geometry"
-                )
-                or
-                {}
+            address.get(
+                "pedestrian"
             )
 
-            location = (
-                geometry.get(
-                    "location"
-                )
-                or
-                {}
+            or
+
+            address.get(
+                "residential"
             )
 
-            if (
-                "lat" not in location
-                or
-                "lng" not in location
-            ):
+            or
 
-                continue
-
-            lat = float(
-                location["lat"]
+            address.get(
+                "place"
             )
 
-            lon = float(
-                location["lng"]
+            or
+
+            street
+        )
+
+
+        address_type = str(
+
+            item.get(
+                "addresstype"
             )
 
-            if not in_target_district(
-                lat,
-                lon,
-            ):
+            or
 
-                continue
-
-            location_type = str(
-                geometry.get(
-                    "location_type"
-                )
-                or
-                ""
-            ).upper()
-
-            precision = {
-
-                "ROOFTOP":
-                    "rooftop",
-
-                "RANGE_INTERPOLATED":
-                    "interpolated",
-
-                "GEOMETRIC_CENTER":
-                    "approximate",
-
-                "APPROXIMATE":
-                    "approximate",
-
-            }.get(
-                location_type,
-                "address",
+            item.get(
+                "type"
             )
 
-            result.append(
-                Candidate(
-                    source="google",
+            or
 
-                    lat=lat,
-                    lon=lon,
+            ""
+        ).lower()
 
-                    street=(
-                        google_component(
-                            item,
-                            "route",
-                        )
-                        or
-                        street
-                    ),
 
-                    house=house,
+        precision = (
 
-                    label=str(
-                        item.get(
-                            "formatted_address"
-                        )
-                        or
-                        ""
-                    ),
+            "building"
 
-                    precision=precision,
+            if address_type
 
-                    confidence=(
-                        0.99
-                        if precision
-                        ==
-                        "rooftop"
-                        else
-                        0.82
-                    ),
+            in {
 
-                    query_street=street,
-                )
+                "building",
+
+                "house",
+
+                "residential",
+            }
+
+            else
+
+            "address"
+        )
+
+
+        result.append(
+
+            Candidate(
+
+                source="osm",
+
+                lat=lat,
+
+                lon=lon,
+
+                street=road,
+
+                house=house,
+
+                label=str(
+
+                    item.get(
+                        "display_name"
+                    )
+
+                    or
+
+                    ""
+                ),
+
+                precision=precision,
+
+                confidence=(
+
+                    0.95
+
+                    if precision
+                    ==
+                    "building"
+
+                    else
+
+                    0.90
+                ),
+
+                query_street=street,
             )
+        )
 
-        if result:
-            break
 
     return result
 
@@ -2643,20 +2944,27 @@ async def geocode_google(
 # ============================================================
 
 async def geocode_mapbox(
+
     session: aiohttp.ClientSession,
+
     parsed: ParsedAddress,
+
 ) -> list[Candidate]:
 
     if not MAPBOX_TOKEN:
+
         return []
 
+
     result = []
+
 
     for street in street_variants(
         parsed.street
     )[:2]:
 
         data = await get_json(
+
             session,
 
             (
@@ -2666,6 +2974,7 @@ async def geocode_mapbox(
             ),
 
             params={
+
                 "address_number":
                     parsed.house,
 
@@ -2692,211 +3001,297 @@ async def geocode_mapbox(
             },
         )
 
+
         for feature in (
+
             data.get(
                 "features",
                 [],
             )
+
             or
+
             []
         ):
 
             properties = (
+
                 feature.get(
                     "properties"
                 )
+
                 or
+
                 {}
             )
 
+
             context = (
+
                 properties.get(
                     "context"
                 )
+
                 or
+
                 {}
             )
 
+
             address_data = (
+
                 context.get(
                     "address"
                 )
+
                 or
+
                 {}
             )
 
+
             street_data = (
+
                 context.get(
                     "street"
                 )
+
                 or
+
                 {}
             )
 
+
             match_code = (
+
                 properties.get(
                     "match_code"
                 )
+
                 or
+
                 {}
             )
 
+
             house = str(
+
                 address_data.get(
                     "address_number"
                 )
+
                 or
+
                 properties.get(
                     "address_number"
                 )
+
                 or
+
                 properties.get(
                     "address"
                 )
+
                 or
+
                 ""
             )
 
+
             if (
+
                 not house
 
                 and
 
                 str(
+
                     match_code.get(
                         "address_number"
                     )
+
                     or
+
                     ""
                 ).lower()
+
                 ==
+
                 "matched"
+
             ):
 
                 house = parsed.house
 
+
             if not same_house(
+
                 house,
+
                 parsed.house,
+
             ):
 
                 continue
 
+
             if (
+
                 str(
+
                     match_code.get(
                         "street"
                     )
+
                     or
+
                     ""
                 ).lower()
+
                 ==
+
                 "unmatched"
+
             ):
 
                 continue
 
+
             coordinates_data = (
+
                 properties.get(
                     "coordinates"
                 )
+
                 or
+
                 {}
             )
 
+
             lat = None
+
             lon = None
 
+
             precision = str(
+
                 coordinates_data.get(
                     "accuracy"
                 )
+
                 or
+
                 "address"
             ).lower()
 
-            # Если Mapbox знает въезд/вход —
-            # берём его
+
+            # Если есть точка въезда/входа —
+            # используем её
             for point in (
+
                 coordinates_data.get(
                     "routable_points",
                     [],
                 )
+
                 or
+
                 []
             ):
 
                 if (
+
                     str(
+
                         point.get(
                             "name"
                         )
+
                         or
+
                         ""
                     ).lower()
+
                     ==
+
                     "entrance"
+
                 ):
 
                     lat = float(
-                        point[
-                            "latitude"
-                        ]
+                        point["latitude"]
                     )
 
                     lon = float(
-                        point[
-                            "longitude"
-                        ]
+                        point["longitude"]
                     )
 
                     precision = "entrance"
 
                     break
 
+
             if lat is None:
 
-                coordinates = (
+                coords = (
+
                     (
                         feature.get(
                             "geometry"
                         )
+
                         or
+
                         {}
                     )
+
                     .get(
                         "coordinates"
                     )
+
                     or
+
                     []
                 )
 
+
                 if len(
-                    coordinates
+                    coords
                 ) >= 2:
 
                     lon = float(
-                        coordinates[0]
+                        coords[0]
                     )
 
                     lat = float(
-                        coordinates[1]
+                        coords[1]
                     )
 
+
             if (
+
                 lat is None
+
                 or
+
                 lon is None
+
             ):
 
                 continue
+
 
             if not in_target_district(
+
                 lat,
+
                 lon,
+
             ):
 
                 continue
+
 
             confidence = {
 
@@ -2913,53 +3308,78 @@ async def geocode_mapbox(
                     0.60,
 
             }.get(
+
                 str(
+
                     match_code.get(
                         "confidence"
                     )
+
                     or
+
                     ""
                 ).lower(),
+
                 0.82,
             )
 
+
             if precision not in {
+
                 "rooftop",
+
                 "entrance",
+
                 "point",
+
                 "parcel",
+
                 "interpolated",
+
                 "approximate",
+
             }:
 
                 precision = "address"
 
+
             result.append(
+
                 Candidate(
+
                     source="mapbox",
 
                     lat=lat,
+
                     lon=lon,
 
                     street=str(
+
                         street_data.get(
                             "name"
                         )
+
                         or
+
                         street
                     ),
 
                     house=house,
 
                     label=str(
+
                         properties.get(
                             "full_address"
                         )
+
                         or
+
                         properties.get(
                             "name"
                         )
+
                         or
+
                         ""
                     ),
 
@@ -2971,74 +3391,38 @@ async def geocode_mapbox(
                 )
             )
 
+
         if result:
+
             break
+
 
     return result
 
 
 # ============================================================
-# БЕЗОПАСНЫЙ ВЫЗОВ ПРОВАЙДЕРА
-# ============================================================
-
-async def safe_call(
-    name: str,
-    coroutine: Any,
-    timeout: float,
-) -> list[Candidate]:
-
-    started = time.perf_counter()
-
-    try:
-
-        result = await asyncio.wait_for(
-            coroutine,
-            timeout=timeout,
-        )
-
-        log.info(
-            "%s: %d result(s) %.2fs",
-            name,
-            len(
-                result
-            ),
-            time.perf_counter()
-            -
-            started,
-        )
-
-        return result
-
-    except Exception as exc:
-
-        log.warning(
-            "%s failed %.2fs: %s",
-            name,
-            time.perf_counter()
-            -
-            started,
-            exc,
-        )
-
-        return []
-
-
-# ============================================================
-# БЫСТРЫЙ ПОИСК
+# SEARCH
 # ============================================================
 
 async def resolve_address(
+
     session: aiohttp.ClientSession,
+
     parsed: ParsedAddress,
+
 ) -> tuple[
     Optional[Candidate],
     list[Candidate],
 ]:
 
-    # Сначала наша подтверждённая база
+    # ========================================================
+    # 1. СОХРАНЁННАЯ ПОДТВЕРЖДЁННАЯ ТОЧКА
+    # ========================================================
+
     learned = get_learned(
         parsed
     )
+
 
     if learned:
 
@@ -3047,243 +3431,80 @@ async def resolve_address(
             [learned],
         )
 
+
     # ========================================================
-    # OSM + GOOGLE + MAPBOX ЗАПУСКАЕМ ОДНОВРЕМЕННО
+    # 2. OSM + MAPBOX ПАРАЛЛЕЛЬНО
     # ========================================================
 
-    tasks = {
+    overpass_task = asyncio.create_task(
 
-        asyncio.create_task(
-            safe_call(
-                "overpass",
+        safe_call(
 
-                geocode_overpass(
-                    session,
-                    parsed,
-                ),
-
-                OVERPASS_TIMEOUT
-                +
-                0.2,
-            )
-        ):
             "overpass",
 
-        asyncio.create_task(
-            safe_call(
-                "google",
+            geocode_overpass(
 
-                geocode_google(
-                    session,
-                    parsed,
-                ),
+                session,
 
-                PROVIDER_TIMEOUT,
-            )
-        ):
-            "google",
+                parsed,
+            ),
 
-        asyncio.create_task(
-            safe_call(
-                "mapbox",
+            OVERPASS_TIMEOUT
+            +
+            0.2,
+        )
+    )
 
-                geocode_mapbox(
-                    session,
-                    parsed,
-                ),
 
-                PROVIDER_TIMEOUT,
-            )
-        ):
+    mapbox_task = asyncio.create_task(
+
+        safe_call(
+
             "mapbox",
-    }
 
-    collected = []
+            geocode_mapbox(
 
-    started = time.monotonic()
+                session,
 
-    overpass_done = False
-
-    try:
-
-        while (
-            tasks
-
-            and
-
-            time.monotonic()
-            -
-            started
-            <
-            FAST_DEADLINE
-        ):
-
-            remaining = (
-                FAST_DEADLINE
-                -
-                (
-                    time.monotonic()
-                    -
-                    started
-                )
-            )
-
-            done, _ = await asyncio.wait(
-                tasks.keys(),
-
-                timeout=min(
-                    0.35,
-                    remaining,
-                ),
-
-                return_when=
-                    asyncio.FIRST_COMPLETED,
-            )
-
-            if not done:
-                continue
-
-            for task in done:
-
-                name = tasks.pop(
-                    task
-                )
-
-                try:
-
-                    values = task.result()
-
-                except Exception:
-
-                    values = []
-
-                collected.extend(
-                    values
-                )
-
-                if name == "overpass":
-
-                    overpass_done = True
-
-            ranked = rank_candidates(
                 parsed,
-                collected,
-            )
+            ),
 
-            chosen = choose_result(
-                parsed,
-                ranked,
-            )
+            PROVIDER_TIMEOUT,
+        )
+    )
 
-            # =================================================
-            # OSM + подтверждение = сразу ответ
-            # =================================================
 
-            if (
-                chosen
-                and
-                chosen.source
-                ==
-                "overpass"
-            ):
+    overpass, mapbox = await asyncio.gather(
 
-                confirmed = any(
+        overpass_task,
 
-                    family(
-                        candidate.source
-                    )
-                    !=
-                    "osm"
+        mapbox_task,
+    )
 
-                    and
 
-                    distance(
-                        chosen,
-                        candidate,
-                    )
-                    <=
-                    CLUSTER_M
+    candidates = [
 
-                    for candidate
-                    in ranked
-                )
+        *overpass,
 
-                if confirmed:
+        *mapbox,
+    ]
 
-                    for pending_task in tasks:
-
-                        pending_task.cancel()
-
-                    return (
-                        chosen,
-                        ranked,
-                    )
-
-            # =================================================
-            # OSM уже ответил, дома у него нет.
-            # Google/Mapbox нашли — не ждём дальше.
-            # =================================================
-
-            if (
-                overpass_done
-
-                and
-
-                chosen
-
-                and
-
-                chosen.source
-                in {
-                    "google",
-                    "mapbox",
-                }
-            ):
-
-                for pending_task in tasks:
-
-                    pending_task.cancel()
-
-                return (
-                    chosen,
-                    ranked,
-                )
-
-        # Забираем те задачи,
-        # которые успели закончиться
-        for task in list(
-            tasks
-        ):
-
-            if task.done():
-
-                try:
-
-                    collected.extend(
-                        task.result()
-                    )
-
-                except Exception:
-
-                    pass
-
-    finally:
-
-        for task in tasks:
-
-            if not task.done():
-
-                task.cancel()
 
     ranked = rank_candidates(
+
         parsed,
-        collected,
+
+        candidates,
     )
 
+
     chosen = choose_result(
+
         parsed,
+
         ranked,
     )
+
 
     if chosen:
 
@@ -3292,15 +3513,19 @@ async def resolve_address(
             ranked,
         )
 
+
     # ========================================================
-    # ПОСЛЕДНИЙ FALLBACK — NOMINATIM
+    # 3. NOMINATIM — FALLBACK
     # ========================================================
 
     nominatim = await safe_call(
+
         "nominatim",
 
         geocode_nominatim(
+
             session,
+
             parsed,
         ),
 
@@ -3309,19 +3534,27 @@ async def resolve_address(
         1.2,
     )
 
-    collected.extend(
+
+    candidates.extend(
         nominatim
     )
 
+
     ranked = rank_candidates(
+
         parsed,
-        collected,
+
+        candidates,
     )
 
+
     chosen = choose_result(
+
         parsed,
+
         ranked,
     )
+
 
     return (
         chosen,
@@ -3362,8 +3595,11 @@ awaiting_correction: dict[
 
 
 async def resolve_cached(
+
     session: aiohttp.ClientSession,
+
     parsed: ParsedAddress,
+
 ) -> tuple[
     Optional[Candidate],
     list[Candidate],
@@ -3373,6 +3609,7 @@ async def resolve_cached(
         parsed
     )
 
+
     if learned:
 
         return (
@@ -3380,15 +3617,19 @@ async def resolve_cached(
             [learned],
         )
 
+
     key = address_key(
         parsed
     )
+
 
     cached = memory_cache.get(
         key
     )
 
+
     if (
+
         cached
 
         and
@@ -3396,8 +3637,11 @@ async def resolve_cached(
         time.time()
         -
         cached[0]
+
         <=
+
         CACHE_TTL
+
     ):
 
         return (
@@ -3405,45 +3649,69 @@ async def resolve_cached(
             cached[2],
         )
 
+
     if key in inflight:
 
         return await inflight[
             key
         ]
 
+
     async def worker():
 
         best, ranked = await resolve_address(
+
             session,
+
             parsed,
         )
 
-        if best:
+
+        # Mapbox результат не пишем в RAM надолго.
+        if (
+
+            best
+
+            and
+
+            best.source
+            !=
+            "mapbox"
+
+        ):
 
             memory_cache[
                 key
             ] = (
+
                 time.time(),
+
                 best,
+
                 ranked,
             )
+
 
         return (
             best,
             ranked,
         )
 
+
     task = asyncio.create_task(
         worker()
     )
+
 
     inflight[
         key
     ] = task
 
+
     try:
 
         return await task
+
 
     finally:
 
@@ -3454,18 +3722,24 @@ async def resolve_cached(
 
 
 # ============================================================
-# GOOGLE MAPS LINKS
+# GOOGLE MAPS
+# БЕЗ API
 # ============================================================
 
 def maps_url(
+
     lat: float,
+
     lon: float,
+
 ) -> str:
 
     return (
+
         "https://www.google.com/"
         "maps/search/"
         "?api=1&query="
+
         f"{lat:.7f},"
         f"{lon:.7f}"
     )
@@ -3476,6 +3750,7 @@ def maps_address_url(
 ) -> str:
 
     query = quote(
+
         (
             f"{parsed.street} "
             f"{parsed.house}, "
@@ -3483,16 +3758,19 @@ def maps_address_url(
         )
     )
 
+
     return (
+
         "https://www.google.com/"
         "maps/search/"
         "?api=1&query="
+
         f"{query}"
     )
 
 
 # ============================================================
-# РУЧНОЕ ИСПРАВЛЕНИЕ
+# GOOGLE MAPS LINK CORRECTION
 # ============================================================
 
 def coords_from_text(
@@ -3509,6 +3787,7 @@ def coords_from_text(
         or
         ""
     )
+
 
     patterns = [
 
@@ -3542,16 +3821,23 @@ def coords_from_text(
         ),
     ]
 
+
     for pattern in patterns:
 
         match = re.search(
+
             pattern,
+
             decoded,
+
             flags=re.I,
         )
 
+
         if not match:
+
             continue
+
 
         lat = float(
             match.group(
@@ -3559,15 +3845,20 @@ def coords_from_text(
             )
         )
 
+
         lon = float(
             match.group(
                 2
             )
         )
 
+
         if in_target_district(
+
             lat,
+
             lon,
+
         ):
 
             return (
@@ -3575,12 +3866,16 @@ def coords_from_text(
                 lon,
             )
 
+
     return None
 
 
 async def coords_from_google_link(
+
     session: aiohttp.ClientSession,
+
     text: str,
+
 ) -> Optional[
     tuple[
         float,
@@ -3592,17 +3887,26 @@ async def coords_from_google_link(
         text
     )
 
+
     if direct:
+
         return direct
 
+
     match = re.search(
+
         r"https?://[^\s]+",
+
         text,
+
         flags=re.I,
     )
 
+
     if not match:
+
         return None
+
 
     url = match.group(
         0
@@ -3610,26 +3914,38 @@ async def coords_from_google_link(
         ".,);]"
     )
 
-    if not any(
-        domain in url.lower()
 
-        for domain in (
+    if not any(
+
+        domain
+        in
+        url.lower()
+
+        for domain
+        in (
+
             "google.com/maps",
+
             "maps.app.goo.gl",
+
             "goo.gl/maps",
         )
+
     ):
 
         return None
 
+
     try:
 
         async with session.get(
+
             url,
 
             allow_redirects=True,
 
             headers={
+
                 "User-Agent":
                     "Mozilla/5.0"
             },
@@ -3640,20 +3956,29 @@ async def coords_from_google_link(
 
         ) as response:
 
-            direct = coords_from_text(
+            coords = coords_from_text(
+
                 str(
                     response.url
                 )
             )
 
-            if direct:
-                return direct
+
+            if coords:
+
+                return coords
+
 
             html = await response.text()
 
+
             return coords_from_text(
-                html[:600000]
+
+                html[
+                    :600000
+                ]
             )
+
 
     except Exception:
 
@@ -3665,25 +3990,34 @@ async def coords_from_google_link(
 # ============================================================
 
 def result_keyboard(
+
     token: str,
+
     best: Candidate,
+
 ) -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup([
 
         [
+
             InlineKeyboardButton(
+
                 "📍 Открыть Google Maps ↗",
 
                 url=maps_url(
+
                     best.lat,
+
                     best.lon,
                 ),
             )
         ],
 
         [
+
             InlineKeyboardButton(
+
                 "✅ Метка верная",
 
                 callback_data=(
@@ -3692,6 +4026,7 @@ def result_keyboard(
             ),
 
             InlineKeyboardButton(
+
                 "🎯 Уточнить",
 
                 callback_data=(
@@ -3703,14 +4038,19 @@ def result_keyboard(
 
 
 def not_found_keyboard(
+
     token: str,
+
     parsed: ParsedAddress,
+
 ) -> InlineKeyboardMarkup:
 
     return InlineKeyboardMarkup([
 
         [
+
             InlineKeyboardButton(
+
                 "🔎 Открыть Google Maps ↗",
 
                 url=maps_address_url(
@@ -3720,7 +4060,9 @@ def not_found_keyboard(
         ],
 
         [
+
             InlineKeyboardButton(
+
                 "🎯 Сохранить точную точку",
 
                 callback_data=(
@@ -3731,6 +4073,10 @@ def not_found_keyboard(
     ])
 
 
+# ============================================================
+# CLEANUP
+# ============================================================
+
 def cleanup_pending() -> None:
 
     cutoff = (
@@ -3739,16 +4085,21 @@ def cleanup_pending() -> None:
         PENDING_TTL
     )
 
+
     for token in list(
         pending_results
     ):
 
         if (
+
             pending_results[
                 token
             ].created_at
+
             <
+
             cutoff
+
         ):
 
             pending_results.pop(
@@ -3756,16 +4107,21 @@ def cleanup_pending() -> None:
                 None,
             )
 
+
     for key in list(
         awaiting_correction
     ):
 
         if (
+
             awaiting_correction[
                 key
             ].created_at
+
             <
+
             cutoff
+
         ):
 
             awaiting_correction.pop(
@@ -3775,42 +4131,63 @@ def cleanup_pending() -> None:
 
 
 # ============================================================
-# TELEGRAM
+# START
 # ============================================================
 
 async def start_cmd(
+
     update: Update,
+
     context: ContextTypes.DEFAULT_TYPE,
-) -> None:
 
-    if update.message:
-
-        await update.message.reply_text(
-            (
-                "Отправь улицу и номер дома.\n"
-
-                "Например: Лермонтова 25\n\n"
-
-                "OpenStreetMap — главный, "
-                "Google и Mapbox проверяют."
-            )
-        )
-
-
-async def status_cmd(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
 
     if not update.message:
+
         return
 
+
     await update.message.reply_text(
+
+        (
+            "Отправь улицу и номер дома.\n\n"
+
+            "Например:\n"
+
+            "Лермонтова 25\n\n"
+
+            "OpenStreetMap — главный.\n"
+
+            "Mapbox — проверка.\n"
+
+            "Google Maps — без API."
+        )
+    )
+
+
+# ============================================================
+# STATUS
+# ============================================================
+
+async def status_cmd(
+
+    update: Update,
+
+    context: ContextTypes.DEFAULT_TYPE,
+
+) -> None:
+
+    if not update.message:
+
+        return
+
+
+    await update.message.reply_text(
+
         (
             "OpenStreetMap: ✅ главный\n"
 
-            f"Google: "
-            f"{'✅' if GOOGLE_API_KEY else '—'}\n"
+            "Google Maps: ✅ без API\n"
 
             f"Mapbox: "
             f"{'✅' if MAPBOX_TOKEN else '—'}\n"
@@ -3829,48 +4206,72 @@ async def status_cmd(
 # ============================================================
 
 async def test_cmd(
+
     update: Update,
+
     context: ContextTypes.DEFAULT_TYPE,
+
 ) -> None:
 
     if not update.message:
+
         return
+
 
     session = context.application.bot_data[
         "http"
     ]
 
+
     parsed = ParsedAddress(
+
         original="Лермонтова 25",
+
         street="Лермонтова",
+
         house="25",
     )
 
+
     started = time.perf_counter()
 
+
     best, ranked = await resolve_address(
+
         session,
+
         parsed,
     )
 
+
     elapsed = (
+
         time.perf_counter()
+
         -
+
         started
     )
 
+
     lines = [
-        f"🧪 Лермонтова 25 — "
-        f"{elapsed:.2f} сек"
+
+        (
+            f"🧪 Лермонтова 25 — "
+            f"{elapsed:.2f} сек"
+        )
     ]
+
 
     for candidate in ranked:
 
         lines.append(
+
             (
                 f"{candidate.source}: "
 
                 f"{candidate.lat:.7f}, "
+
                 f"{candidate.lon:.7f} | "
 
                 f"{candidate.precision} | "
@@ -3880,25 +4281,32 @@ async def test_cmd(
             )
         )
 
+
     if best:
 
         lines.append(
+
             (
                 f"\n✅ Выбрано: "
                 f"{best.source}\n"
 
                 f"{best.lat:.7f}, "
+
                 f"{best.lon:.7f}"
             )
         )
 
+
     else:
 
         lines.append(
+
             "\n❌ Надёжная точка не выбрана"
         )
 
+
     await update.message.reply_text(
+
         "\n".join(
             lines
         )
@@ -3906,56 +4314,84 @@ async def test_cmd(
 
 
 # ============================================================
-# TEXT
+# TEXT HANDLER
 # ============================================================
 
 async def handle_text(
+
     update: Update,
+
     context: ContextTypes.DEFAULT_TYPE,
+
 ) -> None:
 
     if (
+
         not update.message
+
         or
+
         not update.message.text
+
         or
+
         not update.effective_user
+
     ):
 
         return
 
+
     cleanup_pending()
+
 
     session = context.application.bot_data[
         "http"
     ]
 
+
     user = update.effective_user
+
 
     text = update.message.text.strip()
 
+
     correction_key = (
+
         update.message.chat.id,
+
         user.id,
     )
+
 
     pending = awaiting_correction.get(
         correction_key
     )
 
+
+    # ========================================================
+    # Пользователь отправляет Google Maps ссылку
+    # после нажатия "Уточнить"
+    # ========================================================
+
     if pending:
 
         coords = await coords_from_google_link(
+
             session,
+
             text,
         )
+
 
         if coords:
 
             save_learned(
+
                 pending.parsed,
 
                 coords[0],
+
                 coords[1],
 
                 pending.parsed.original,
@@ -3963,29 +4399,41 @@ async def handle_text(
                 "user_correction",
             )
 
+
             memory_cache.pop(
+
                 address_key(
                     pending.parsed
                 ),
+
                 None,
             )
+
 
             awaiting_correction.pop(
+
                 correction_key,
+
                 None,
             )
 
+
             await update.message.reply_text(
+
                 "✅ Точная точка сохранена.",
 
                 reply_markup=InlineKeyboardMarkup([
 
                     [
+
                         InlineKeyboardButton(
+
                             "📍 Открыть точку ↗",
 
                             url=maps_url(
+
                                 coords[0],
+
                                 coords[1],
                             ),
                         )
@@ -3993,13 +4441,16 @@ async def handle_text(
                 ]),
             )
 
+
             return
+
 
         if "http" in text.lower():
 
             await update.message.reply_text(
+
                 (
-                    "Не смог получить координаты. "
+                    "Не смог получить координаты.\n\n"
 
                     "В Google Maps зажми точный дом → "
 
@@ -4011,23 +4462,38 @@ async def handle_text(
                 )
             )
 
+
             return
+
+
+    # ========================================================
+    # Обычный адрес
+    # ========================================================
 
     parsed = parse_address(
         text
     )
 
+
     if not parsed:
+
+        # В группе обычные сообщения игнорируем.
         return
+
 
     started = time.perf_counter()
 
+
     best, ranked = await resolve_cached(
+
         session,
+
         parsed,
     )
 
+
     log.info(
+
         "RESULT %s -> %s %.2fs",
 
         parsed.original,
@@ -4042,14 +4508,18 @@ async def handle_text(
         started,
     )
 
+
     token = uuid.uuid4().hex[:12]
+
 
     pending_results[
         token
     ] = PendingResult(
+
         owner_id=user.id,
 
-        chat_id=update.message.chat.id,
+        chat_id=
+            update.message.chat.id,
 
         parsed=parsed,
 
@@ -4060,11 +4530,17 @@ async def handle_text(
         created_at=time.time(),
     )
 
+
+    # ========================================================
+    # НЕ НАШЛИ ТОЧНО
+    # ========================================================
+
     if not best:
 
         await update.message.reply_text(
+
             (
-                f"🔎 Точный дом не подтверждён:\n"
+                "🔎 Точный дом не подтверждён:\n"
 
                 f"{parsed.original}\n\n"
 
@@ -4072,15 +4548,25 @@ async def handle_text(
                 "бот отправлять не будет."
             ),
 
-            reply_markup=not_found_keyboard(
-                token,
-                parsed,
-            ),
+            reply_markup=
+                not_found_keyboard(
+
+                    token,
+
+                    parsed,
+                ),
         )
+
 
         return
 
+
+    # ========================================================
+    # НАШЛИ
+    # ========================================================
+
     await update.message.reply_text(
+
         (
             f"📍 Улица: "
             f"{parsed.original}\n"
@@ -4091,7 +4577,9 @@ async def handle_text(
         ),
 
         reply_markup=result_keyboard(
+
             token,
+
             best,
         ),
 
@@ -4100,27 +4588,37 @@ async def handle_text(
 
 
 # ============================================================
-# CALLBACK
+# CALLBACK BUTTONS
 # ============================================================
 
 async def callback_handler(
+
     update: Update,
+
     context: ContextTypes.DEFAULT_TYPE,
+
 ) -> None:
 
     query = update.callback_query
 
     user = update.effective_user
 
+
     if (
+
         not query
+
         or
+
         not user
+
     ):
 
         return
 
+
     data = query.data or ""
+
 
     if ":" not in data:
 
@@ -4128,71 +4626,101 @@ async def callback_handler(
 
         return
 
+
     action, token = data.split(
+
         ":",
+
         1,
     )
+
 
     pending = pending_results.get(
         token
     )
 
+
     if not pending:
 
         await query.answer(
+
             "Метка устарела",
+
             show_alert=True,
         )
 
         return
+
 
     if user.id != pending.owner_id:
 
         await query.answer(
+
             "Изменить может автор запроса",
+
             show_alert=True,
         )
 
         return
+
+
+    # ========================================================
+    # МЕТКА ВЕРНАЯ
+    # ========================================================
 
     if action == "ok":
 
         if not pending.best:
 
             await query.answer(
+
                 "Нет точки",
+
                 show_alert=True,
             )
 
             return
 
+
         save_learned(
+
             pending.parsed,
 
             pending.best.lat,
+
             pending.best.lon,
 
-            pending.best.label
-            or
-            pending.parsed.original,
+            (
+                pending.best.label
+
+                or
+
+                pending.parsed.original
+            ),
 
             pending.best.source,
         )
 
+
         memory_cache.pop(
+
             address_key(
                 pending.parsed
             ),
+
             None,
         )
+
 
         await query.answer(
             "Сохранил ✅"
         )
 
+
         if query.message:
 
             await query.edit_message_text(
+
                 (
                     f"📍 Улица: "
                     f"{pending.parsed.original}\n"
@@ -4202,133 +4730,187 @@ async def callback_handler(
                     "✅ Метка подтверждена."
                 ),
 
-                reply_markup=InlineKeyboardMarkup([
+                reply_markup=
+                    InlineKeyboardMarkup([
 
-                    [
-                        InlineKeyboardButton(
-                            "📍 Открыть Google Maps ↗",
+                        [
 
-                            url=maps_url(
-                                pending.best.lat,
-                                pending.best.lon,
-                            ),
-                        )
-                    ]
-                ]),
+                            InlineKeyboardButton(
+
+                                "📍 Открыть Google Maps ↗",
+
+                                url=maps_url(
+
+                                    pending.best.lat,
+
+                                    pending.best.lon,
+                                ),
+                            )
+                        ]
+                    ]),
             )
 
+
         return
+
+
+    # ========================================================
+    # УТОЧНИТЬ
+    # ========================================================
 
     if action == "fix":
 
         awaiting_correction[
+
             (
+
                 pending.chat_id,
+
                 pending.owner_id,
             )
+
         ] = pending
 
+
         await query.answer()
+
 
         if pending.best:
 
             url = maps_url(
+
                 pending.best.lat,
+
                 pending.best.lon,
             )
 
         else:
 
             url = maps_address_url(
+
                 pending.parsed
             )
+
 
         if query.message:
 
             await query.message.reply_text(
+
                 (
                     "🎯 Уточнение точки\n\n"
 
-                    "1. Открой карту.\n"
+                    "1. Открой Google Maps.\n"
 
                     "2. Зажми точный дом.\n"
 
-                    "3. Поделиться → "
-                    "Копировать ссылку.\n"
+                    "3. Нажми Поделиться.\n"
 
-                    "4. Пришли ссылку сюда."
+                    "4. Копировать ссылку.\n"
+
+                    "5. Пришли ссылку сюда."
                 ),
 
-                reply_markup=InlineKeyboardMarkup([
+                reply_markup=
+                    InlineKeyboardMarkup([
 
-                    [
-                        InlineKeyboardButton(
-                            "🗺 Открыть карту ↗",
+                        [
 
-                            url=url,
-                        )
-                    ]
-                ]),
+                            InlineKeyboardButton(
+
+                                "🗺 Открыть карту ↗",
+
+                                url=url,
+                            )
+                        ]
+                    ]),
             )
 
 
 # ============================================================
-# LOCATION
+# TELEGRAM LOCATION
 # ============================================================
 
 async def handle_location(
+
     update: Update,
+
     context: ContextTypes.DEFAULT_TYPE,
+
 ) -> None:
 
     if (
+
         not update.message
+
         or
+
         not update.message.location
+
         or
+
         not update.effective_user
+
     ):
 
         return
 
+
     key = (
+
         update.message.chat.id,
+
         update.effective_user.id,
     )
+
 
     pending = awaiting_correction.get(
         key
     )
 
+
     if not pending:
+
         return
 
+
     lat = float(
+
         update.message.location.latitude
     )
 
+
     lon = float(
+
         update.message.location.longitude
     )
 
+
     if not in_target_district(
+
         lat,
+
         lon,
+
     ):
 
         await update.message.reply_text(
+
             (
                 "❌ Точка вне "
                 "Центрально-Городского района."
             )
         )
 
+
         return
 
+
     save_learned(
+
         pending.parsed,
 
         lat,
+
         lon,
 
         pending.parsed.original,
@@ -4336,49 +4918,66 @@ async def handle_location(
         "user_correction",
     )
 
+
     memory_cache.pop(
+
         address_key(
             pending.parsed
         ),
+
         None,
     )
+
 
     awaiting_correction.pop(
         key,
         None,
     )
 
+
     await update.message.reply_text(
+
         "✅ Точная точка сохранена.",
 
-        reply_markup=InlineKeyboardMarkup([
+        reply_markup=
+            InlineKeyboardMarkup([
 
-            [
-                InlineKeyboardButton(
-                    "📍 Открыть точку ↗",
+                [
 
-                    url=maps_url(
-                        lat,
-                        lon,
-                    ),
-                )
-            ]
-        ]),
+                    InlineKeyboardButton(
+
+                        "📍 Открыть точку ↗",
+
+                        url=maps_url(
+
+                            lat,
+
+                            lon,
+                        ),
+                    )
+                ]
+            ]),
     )
 
 
 # ============================================================
-# ERRORS
+# ERROR
 # ============================================================
 
 async def error_handler(
+
     update: object,
+
     context: ContextTypes.DEFAULT_TYPE,
+
 ) -> None:
 
     log.exception(
+
         "Telegram error",
-        exc_info=context.error,
+
+        exc_info=
+            context.error,
     )
 
 
@@ -4391,6 +4990,7 @@ async def post_init(
 ) -> None:
 
     connector = aiohttp.TCPConnector(
+
         limit=30,
 
         limit_per_host=10,
@@ -4400,23 +5000,29 @@ async def post_init(
         keepalive_timeout=30,
     )
 
-    session = aiohttp.ClientSession(
-        timeout=HTTP_TIMEOUT,
 
-        connector=connector,
+    session = aiohttp.ClientSession(
+
+        timeout=
+            HTTP_TIMEOUT,
+
+        connector=
+            connector,
 
         headers={
+
             "User-Agent":
                 "Metka-Kryvyi-Rih-Fast/1.0"
         },
     )
 
+
     application.bot_data[
         "http"
     ] = session
 
-    # Загружается один раз,
-    # а не на каждый адрес
+
+    # Один раз загружаем границу района
     await load_district_polygon(
         session
     )
@@ -4430,15 +5036,20 @@ async def post_shutdown(
         "http"
     )
 
+
     if (
+
         isinstance(
+
             session,
+
             aiohttp.ClientSession,
         )
 
         and
 
         not session.closed
+
     ):
 
         await session.close()
@@ -4456,9 +5067,30 @@ def main() -> None:
             "Не задан BOT_TOKEN"
         )
 
+
     init_db()
 
+
+    log.info(
+
+        (
+            "Starting | "
+            "OSM primary | "
+            "Google Maps no API | "
+            "Mapbox=%s | "
+            "DB=%s"
+        ),
+
+        bool(
+            MAPBOX_TOKEN
+        ),
+
+        DB_PATH,
+    )
+
+
     application = (
+
         Application
         .builder()
 
@@ -4477,75 +5109,81 @@ def main() -> None:
         .build()
     )
 
+
     application.add_handler(
+
         CommandHandler(
+
             "start",
+
             start_cmd,
         )
     )
 
+
     application.add_handler(
+
         CommandHandler(
+
             "status",
+
             status_cmd,
         )
     )
 
+
     application.add_handler(
+
         CommandHandler(
+
             "test",
+
             test_cmd,
         )
     )
 
+
     application.add_handler(
+
         CallbackQueryHandler(
             callback_handler
         )
     )
 
+
     application.add_handler(
+
         MessageHandler(
+
             filters.LOCATION,
+
             handle_location,
         )
     )
 
+
     application.add_handler(
+
         MessageHandler(
+
             filters.TEXT
+
             &
+
             ~filters.COMMAND,
 
             handle_text,
         )
     )
 
+
     application.add_error_handler(
         error_handler
     )
 
-    log.info(
-        (
-            "Starting fast mode | "
-            "OSM primary | "
-            "Google=%s | "
-            "Mapbox=%s | "
-            "DB=%s"
-        ),
-
-        bool(
-            GOOGLE_API_KEY
-        ),
-
-        bool(
-            MAPBOX_TOKEN
-        ),
-
-        DB_PATH,
-    )
 
     application.run_polling(
+
         allowed_updates=
             Update.ALL_TYPES,
 
@@ -4554,4 +5192,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+
     main()
